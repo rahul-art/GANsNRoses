@@ -51,10 +51,11 @@ plt.rcParams['figure.dpi'] = 200
 torch.manual_seed(84986)
 
 num_styles = 1
-style = torch.randn([num_styles, latent_dim]).to(device)
+# style = torch.randn([num_styles, latent_dim]).to(device)
 
 
 def inference(input_im):
+    style = torch.randn([num_styles, latent_dim]).to(device)
     real_A = test_transform(input_im).unsqueeze(0).to(device)
 
     with torch.no_grad():
