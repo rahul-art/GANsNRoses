@@ -48,7 +48,7 @@ test_transform = transforms.Compose([
 ])
 plt.rcParams['figure.dpi'] = 200
 
-torch.manual_seed(84986)
+# torch.manual_seed(84986)
 
 num_styles = 1
 style = torch.randn([num_styles, latent_dim]).to(device)
@@ -58,6 +58,7 @@ def inference(input_im):
     real_A = test_transform(input_im).unsqueeze(0).to(device)
 
     with torch.no_grad():
+        torch.manual_seed(random.randint(1, 100000))
         A2B_content, _ = G_A2B.encode(real_A)
         fake_A2B = G_A2B.decode(A2B_content.repeat(num_styles,1,1,1), style)
         std=(0.5, 0.5, 0.5)
