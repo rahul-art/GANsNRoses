@@ -20,6 +20,10 @@ from base64 import b64encode
 import gradio as gr
 from torchvision import transforms
 
+from autocrop import Cropper
+
+cropper = Cropper()
+
 torch.hub.download_url_to_file('https://i.imgur.com/HiOTPNg.png', 'mona.png')
 torch.hub.download_url_to_file('https://i.imgur.com/Cw8HcTN.png', 'painting.png')
 
@@ -54,9 +58,17 @@ num_styles = 1
 # style = torch.randn([num_styles, latent_dim]).to(device)
 
 
-def inference(input_im):
+def inference(input_im, crop):
     style = torch.randn([num_styles, latent_dim]).to(device)
-    real_A = test_transform(input_im).unsqueeze(0).to(device)
+    
+    cropped_array = cropper.crop(input_im)
+
+    if cropped_array.any() and crop:
+        cropped_image = Image.fromarray(cropped_array)        
+        real_A = test_transform(cropped_image).unsqueeze(0).to(device)
+    else:
+        no_crop = Image.fromarray(input_im)
+        real_A = test_transform(no_crop).unsqueeze(0).to(device)
 
     with torch.no_grad():
         A2B_content, _ = G_A2B.encode(real_A)
@@ -74,7 +86,7 @@ article = "<p style='text-align: center'><a href='https://arxiv.org/abs/2106.065
 
 gr.Interface(
     inference, 
-    [gr.inputs.Image(type="pil", label="Input")], 
+    [gr.inputs.Image(type="numpy", label="Input")], 
     gr.outputs.Image(type="pil", label="Output"),
     title=title,
     description=description,
