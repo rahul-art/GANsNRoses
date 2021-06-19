@@ -86,7 +86,8 @@ article = "<p style='text-align: center'><a href='https://arxiv.org/abs/2106.065
 
 gr.Interface(
     inference, 
-    [gr.inputs.Image(type="numpy", label="Input")], 
+    [gr.inputs.Image(type="numpy", label="Input"),
+     gr.inputs.Checkbox(label="Crop Face")], 
     gr.outputs.Image(type="pil", label="Output"),
     title=title,
     description=description,
