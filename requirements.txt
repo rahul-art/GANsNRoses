@@ -8,3 +8,4 @@ lpips
 ninja 
 gradio
 torchvision
+autocrop
