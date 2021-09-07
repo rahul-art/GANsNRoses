@@ -183,5 +183,4 @@ def inference(input_im):
 gr.Interface(
     inference, 
     [gr.inputs.Video(type=None, label="Input")], 
-    gr.outputs.Video(label="Output"),
-    ]).launch()
+    gr.outputs.Video(label="Output")).launch()
