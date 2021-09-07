@@ -14,18 +14,14 @@ from PIL import Image
 from model import *
 import moviepy.video.io.ImageSequenceClip
 import scipy
+import cv2
+import dlib
 import kornia.augmentation as K
+from aubio import tempo, source
 
+from IPython.display import HTML
 from base64 import b64encode
 import gradio as gr
-from torchvision import transforms
-
-from autocrop import Cropper
-
-cropper = Cropper()
-
-torch.hub.download_url_to_file('https://i.imgur.com/HiOTPNg.png', 'mona.png')
-torch.hub.download_url_to_file('https://i.imgur.com/Cw8HcTN.png', 'painting.png')
 
 device = 'cpu'
 latent_dim = 8
@@ -50,49 +46,142 @@ test_transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5), inplace=True)
 ])
-plt.rcParams['figure.dpi'] = 200
 
-torch.manual_seed(84986)
-
-num_styles = 1
-# style = torch.randn([num_styles, latent_dim]).to(device)
+def inference(input_im):
+        mode = 'beat'
+        assert mode in ('normal', 'blend', 'beat', 'eig')
 
 
-def inference(input_im, crop):
-    style = torch.randn([num_styles, latent_dim]).to(device)
-    
-    cropped_array = cropper.crop(input_im)
+        # Frame numbers and length of output video
+        start_frame=0
+        end_frame=None
+        frame_num = 0
+        mp4_fps= 30
+        faces = None
+        smoothing_sec=.7
+        eig_dir_idx = 1 # first eig isnt good so we skip it
 
-    if cropped_array.any() and crop:
-        cropped_image = Image.fromarray(cropped_array)        
-        real_A = test_transform(cropped_image).unsqueeze(0).to(device)
-    else:
-        no_crop = Image.fromarray(input_im)
-        real_A = test_transform(no_crop).unsqueeze(0).to(device)
+        frames = []
+        reader = cv2.VideoCapture(inpath)
+        num_frames = int(reader.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    with torch.no_grad():
-        A2B_content, _ = G_A2B.encode(real_A)
-        fake_A2B = G_A2B.decode(A2B_content.repeat(num_styles,1,1,1), style)
-        std=(0.5, 0.5, 0.5)
-        mean=(0.5, 0.5, 0.5)
-        z = fake_A2B * torch.tensor(std).view(3, 1, 1)
-        z = z + torch.tensor(mean).view(3, 1, 1)
-        tensor_to_pil = transforms.ToPILImage(mode='RGB')(z.squeeze())
-        return tensor_to_pil
+        # get beats from audio
+        win_s = 512                 # fft size
+        hop_s = win_s // 2          # hop size
 
-title = "GANsNRoses"
-description = "demo for GANsNRoses. To use it, simply upload your image, or click one of the examples to load them. Read more at the links below."
-article = "<p style='text-align: center'><a href='https://arxiv.org/abs/2106.06561'>GANs N' Roses: Stable, Controllable, Diverse Image to Image Translation (works for videos too!)</a> | <a href='https://github.com/mchong6/GANsNRoses'>Github Repo</a></p>"
+        s = source(inpath, 0, hop_s)
+        samplerate = s.samplerate
+        o = tempo("default", win_s, hop_s, samplerate)
+        delay = 4. * hop_s
+        # list of beats, in samples
+        beats = []
+
+        # total number of frames read
+        total_frames = 0
+        while True:
+            samples, read = s()
+            is_beat = o(samples)
+            if is_beat:
+                this_beat = int(total_frames - delay + is_beat[0] * hop_s)
+                beats.append(this_beat/ float(samplerate))
+            total_frames += read
+            if read < hop_s: break
+        #print len(beats)
+        beats = [math.ceil(i*mp4_fps) for i in beats]
+
+
+        if mode == 'blend':
+            shape = [num_frames, 8, latent_dim] # [frame, image, channel, component]
+            all_latents = random_state.randn(*shape).astype(np.float32)
+            all_latents = scipy.ndimage.gaussian_filter(all_latents, [smoothing_sec * mp4_fps, 0, 0], mode='wrap')
+            all_latents /= np.sqrt(np.mean(np.square(all_latents)))
+            all_latents = torch.from_numpy(all_latents).to(device)
+        else:
+            all_latents = torch.randn([8, latent_dim]).to(device)
+
+        if mode == 'eig':
+            all_latents = G_A2B.mapping(all_latents)
+
+        in_latent = all_latents
+
+        # Face detector
+        face_detector = dlib.get_frontal_face_detector()
+
+        assert start_frame < num_frames - 1
+        end_frame = end_frame if end_frame else num_frames
+
+        while reader.isOpened():
+            _, image = reader.read()
+            if image is None:
+                break
+
+            if frame_num < start_frame:
+                continue
+            # Image size
+            height, width = image.shape[:2]
+
+            # 2. Detect with dlib
+            if faces is None:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+                faces = face_detector(gray, 1)
+            if len(faces):
+                # For now only take biggest face
+                face = faces[0]
+
+            # --- Prediction ---------------------------------------------------
+            # Face crop with dlib and bounding box scale enlargement
+            x, y, size = get_boundingbox(face, width, height)
+            cropped_face = image[y:y+size, x:x+size]
+            cropped_face = cv2.cvtColor(cropped_face, cv2.COLOR_BGR2RGB)
+            cropped_face = Image.fromarray(cropped_face)
+            frame = test_transform(cropped_face).unsqueeze(0).to(device)
+
+            with torch.no_grad():
+                A2B_content, A2B_style = G_A2B.encode(frame)
+                if mode == 'blend':
+                    in_latent = all_latents[frame_num]
+                elif mode == 'normal':
+                    in_latent = all_latents
+                elif mode == 'beat':
+                    if frame_num in beats:
+                        in_latent = torch.randn([8, latent_dim]).to(device)
+
+                if mode == 'eig':
+                    if frame_num in beats:
+                        direction = 3 * eigvec[:, eig_dir_idx].unsqueeze(0).expand_as(all_latents).to(device)
+                        in_latent = all_latents + direction
+                        eig_dir_idx += 1
+
+                    fake_A2B = G_A2B.decode(A2B_content.repeat(8,1,1,1), in_latent, use_mapping=False)
+                else:
+                    fake_A2B = G_A2B.decode(A2B_content.repeat(8,1,1,1), in_latent)
+
+
+
+                fake_A2B = torch.cat([fake_A2B[:4], frame, fake_A2B[4:]], 0)
+
+                fake_A2B = utils.make_grid(fake_A2B.cpu(), normalize=True, range=(-1, 1), nrow=3)
+
+
+            #concatenate original image top
+            fake_A2B = fake_A2B.permute(1,2,0).cpu().numpy()
+            frames.append(fake_A2B*255)
+
+            frame_num += 1
+
+        clip = moviepy.video.io.ImageSequenceClip.ImageSequenceClip(frames, fps=mp4_fps)
+
+        # save to temporary file. hack to make sure ffmpeg works
+        clip.write_videofile('./temp.mp4')
+
+        # use ffmpeg to add audio to video
+        !ffmpeg -i ./temp.mp4 -i $inpath -c copy -map 0:v:0 -map 1:a:0 $outpath -y
+        !rm ./temp.mp4
+        return outpath
+
 
 gr.Interface(
     inference, 
-    [gr.inputs.Image(type="numpy", label="Input"),
-     gr.inputs.Checkbox(label="Crop Face")], 
-    gr.outputs.Image(type="pil", label="Output"),
-    title=title,
-    description=description,
-    article=article,
-    examples=[
-        ["mona.png"],
-        ["painting.png"]
+    [gr.inputs.Video(type=None, label="Input")], 
+    gr.outputs.Video(label="Output"),
     ]).launch()
