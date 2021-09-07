@@ -172,11 +172,11 @@ def inference(input_im):
         clip = moviepy.video.io.ImageSequenceClip.ImageSequenceClip(frames, fps=mp4_fps)
 
         # save to temporary file. hack to make sure ffmpeg works
-        clip.write_videofile('./temp.mp4')
+        #clip.write_videofile('./temp.mp4')
 
         # use ffmpeg to add audio to video
-        !ffmpeg -i ./temp.mp4 -i $inpath -c copy -map 0:v:0 -map 1:a:0 $outpath -y
-        !rm ./temp.mp4
+        #!ffmpeg -i ./temp.mp4 -i $inpath -c copy -map 0:v:0 -map 1:a:0 $outpath -y
+        #!rm ./temp.mp4
         return outpath
 
 
