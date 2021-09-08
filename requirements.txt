@@ -10,4 +10,4 @@ ninja
 gradio
 torchvision
 autocrop
-
+dlib
