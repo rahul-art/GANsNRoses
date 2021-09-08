@@ -9,3 +9,5 @@ ninja
 gradio
 torchvision
 autocrop
+dlib  
+aubio 
